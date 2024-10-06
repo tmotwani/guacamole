@@ -1,0 +1,127 @@
+version: '3.8'
+
+services:
+  # Watchtower for automatic Docker container updates
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower_dev
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - secrets_network
+
+  # Rclone for cloud backups
+  rclone:
+    image: rclone/rclone:latest
+    container_name: rclone_backup_dev
+    restart: always
+    command: /bin/sh -c "sync /data remote:backup"  # Modify to your specific backup location
+    environment:
+      - RCLONE_CONFIG_PASS=${RCLONE_CONFIG_PASS}  # Set Rclone config password from .env
+    volumes:
+      - ./data:/data
+      - rclone_config_dev:/config/rclone
+    networks:
+      - secrets_network
+
+  # Uptime Kuma for monitoring services uptime
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma_dev
+    restart: always
+    ports:
+      - "3101:3001"  # Changed to avoid conflict with prod (3001 -> 3101)
+    volumes:
+      - uptime-kuma_dev:/app/data
+    networks:
+      - secrets_network
+
+  # Portainer for managing Docker containers via GUI
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer_dev
+    restart: always
+    ports:
+      - "127.0.0.1:9100:9000"  # Changed to avoid conflict (9000 -> 9100)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data_dev:/data
+    networks:
+      - secrets_network
+
+  # Apache Guacamole
+  guacamole:
+    build:
+      context: .
+      dockerfile: Dockerfile.guacamole
+    container_name: guacamole_dev
+    restart: always
+    ports:
+      - "4100:8080"  # Changed to avoid conflict (4000 -> 4100)
+    environment:
+      - GUACD_HOSTNAME=guacd_dev
+      - MYSQL_HOSTNAME=${MYSQL_HOSTNAME}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - PUID=1000
+      - PGID=1000
+      - WEBAPP_CONTEXT=ROOT
+    depends_on:
+      guacd:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    volumes:
+      - /docker/appdata/guacamole_dev:/home/guacamole:rw  # Persist Guacamole config
+    networks:
+      - secrets_network
+
+  guacd:
+    image: guacamole/guacd:latest
+    container_name: guacd_dev
+    restart: always
+    volumes:
+      - /docker/appdata/guacd_dev:/config:rw  # Volume for guacd
+    networks:
+      - secrets_network
+    environment:
+      - PUID=1000
+      - PGID=1000
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'health check'"]
+      interval: 10s
+      retries: 5
+      timeout: 5s
+
+  mysql:
+    image: mysql:latest
+    container_name: mysql_dev
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE_DEV}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /docker/appdata/mysql_dev:/var/lib/mysql:rw  # Persistent volume for MySQL
+    networks:
+      - secrets_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      retries: 5
+      timeout: 5s
+
+networks:
+  secrets_network:
+    driver: bridge
+
+volumes:
+  portainer_data_dev:
+  rclone_config_dev:
+  uptime-kuma_dev:
+  mysql_data_dev:
